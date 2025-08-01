@@ -26,8 +26,8 @@ Captures "before" image automatically
 Detects and records ArUco tags in view
 Creates new project in database
 
+Result: Project becomes active and displays in project info panel and data is uploaded and storedon database 
 
-Result: Project becomes active and displays in project info panel
 
 ADD BOAT
 
@@ -38,8 +38,8 @@ Captures image when button pressed
 Detects boat ArUco tags (ID series 4)
 Associates detected boats with current project
 
-
 Limitation: Button disables after 4 boats added
+
 
 CHECK PAIR
 
@@ -53,6 +53,7 @@ Displays success/failure message
 
 Use Case: Quality control before releasing boats
 
+
 RELEASE BOAT
 
 Purpose: Release individual boats from current project
@@ -64,6 +65,7 @@ Updates database to show boats as available
 
 
 Note: Only releases boats visible in camera
+
 
 RETURN BOX
 
@@ -120,8 +122,8 @@ Auto-scroll: Automatically shows latest messages
 ArUco Tag System
 Tag Types
 
-Boat Tags: ID series 4 (40-49, 400-499, etc.)
-Box Tags: ID series 5 (50-59, 500-599, etc.)
+Boat Tags: ID series 4 (0-49.)
+Box Tags: ID series 5 (0-49)
 
 Tag Detection
 
@@ -161,13 +163,6 @@ Current Project Data: Mirrors main system project info
 Auto-refresh: Updates every 5 seconds
 Manual Refresh: Button for immediate update
 
-Project Synchronization
-
-New projects: Appear on scanner when created
-Project changes: Boat additions/releases update scanner
-Project completion: Scanner shows when projects finished
-Historical projects: Scanner shows when switching to old projects
-
 
 Database & Storage
 Automatic Saving
@@ -183,70 +178,3 @@ Database: /media/jeeves003/EMPTY DRIVE/raspi.db
 Backup: Regular database backups recommended
 Export: Project data can be exported for analysis
 
-
-Troubleshooting
-Common Issues
-Camera Problems
-
-Black preview: Check camera connections
-No image capture: Restart application
-Remote connection failed: Verify satellite Pi is running and network connected
-
-Tag Detection Issues
-
-No tags detected: Ensure tags are clearly visible and well-lit
-Wrong tags detected: Check tag IDs match expected series (4 for boats, 5 for boxes)
-Verification failed: Confirm visible tags belong to current project
-
-Network Issues
-
-Satellite connection lost: Check network cable connections
-Scanner PC offline: Verify scanner PC is running and connected
-Slow remote preview: Normal behavior - remote mode operates at 2-second intervals
-
-Recovery Procedures
-
-Restart application: Close and reopen if system becomes unresponsive
-Restart Pis: Power cycle both Raspberry Pis if network issues persist
-Database recovery: Use Project History to resume interrupted projects
-
-
-System Requirements
-Hardware
-
-Raspberry Pi 5 (Main) with camera module
-Raspberry Pi (Satellite) with camera module
-Network connection between Pis
-Geotek Scanner PC with network access
-ArUco tags (series 4 and 5)
-
-Software
-
-Python 3.8+
-PyQt6
-OpenCV with ArUco support
-SQLite3
-Network client/server modules
-
-
-Safety & Best Practices
-Workflow Guidelines
-
-Always start with NEW BOX for each core section
-Verify tags with CHECK PAIR before releasing boats
-Complete projects with RETURN BOX to ensure data integrity
-Use Project History to review completed work
-
-Data Protection
-
-Regular backups: Copy database file periodically
-Verify captures: Check that before/after images are clear
-Tag visibility: Ensure all tags are clearly readable in images
-Network stability: Maintain reliable connection for remote operations
-
-Quality Control
-
-Tag verification: Always use CHECK PAIR before RELEASE BOAT
-Image quality: Ensure adequate lighting for tag detection
-Project completion: Verify all boats released before RETURN BOX
-Data review: Use Project History to audit completed projects
