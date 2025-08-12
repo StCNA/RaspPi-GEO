@@ -111,8 +111,10 @@ class PC2RPi_client():
             sys.exit()
     
     def request(self, message=''):
+        
+        if self.sock is None:
+            self.connect_client()
         try:
-            print(f"DEBUG: Checking message '{message}' against REQUEST keys: {list(self.REQUEST.keys())}")
             # check if request is authorized
             if (message not in self.REQUEST):
                 logger.error("PC2RPi_client - unknown request")
@@ -223,11 +225,11 @@ class PC2RPi_client():
             if message == self.REQUEST["get_preview"]:
                 # get the reply
                 data = self.get_message().decode("utf-8")
-                # act on data content
                 if data == "preview done":
+                    print("DEBUG CLIENT: get_preview successful")
                     return True
-                else:
-                    return False
+                print("DEBUG CLIENT: get_preview failed")
+                return False
 
             #------------------------------
             ## "send_preview" requested
@@ -258,35 +260,26 @@ class PC2RPi_client():
             #------------------------------
             ## "send_IM" requested
             if message == self.REQUEST["send_IM"]:
-                print("DEBUG: Starting send_IM request")
                 # init downloaded pic list and image list
                 downloaded_pic = False
                 image = None
                 for i in range(4):
-                    print(f"DEBUG: Loop iteration {i}")
                     # get the reply
                     data = self.get_message().decode("utf-8")
-                    print(f"DEBUG: Received message: '{data}'")
+                    print(f"Received message: '{data}'")
                     if data == "img_ready":
-                        print("DEBUG: Got img_ready, calling receive_picture()")
                         # get picture from RPi
                         image = self.receive_picture()
                         downloaded_pic = True
-                        print("DEBUG: Picture received, sending pic_received confirmation")
                         # send signal to confirm picture transfer
                         self.send_message(b"pic_received")
-                        print("DEBUG: Getting final confirmation message...")
                         # get confirmation that the image acquisition process is complete on RPi
                         data = self.get_message().decode("utf-8")
-                        print(f"DEBUG: Final message: '{data}'")
                         if data == "all_images_transfered":
-                            print("DEBUG: Success! Returning True, image")
                             return True, image
                         else:
-                            print(f"DEBUG: Expected 'all_images_transfered', got '{data}' - FAILING")
                             return False, None
                     else:
-                        print(f"DEBUG: Expected 'img_ready', got '{data}' - FAILING")
                         logger.error ("PC2RPi_client error: get_image request returned unexpected information")
                         print ("get_image request returned unexpected information")
                         return False, None

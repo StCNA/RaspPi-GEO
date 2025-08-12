@@ -52,35 +52,70 @@ class BackendManager:
         return self.ar.tag_detector(image, tag_type)
     
     def capture_image(self):
-        if self.is_remote_mode and self.satellite_client:
+        if self.is_remote_mode:
             try:
-                success = self.satellite_client.request("get_IM")
+                # Step 1: get_IM with first connection
+                from client_side import PC2RPi_client
+                client1 = PC2RPi_client(RPi="Pi_1", port=1515)
+                client1.connect_client()
+                
+                success = client1.request("get_IM")
+                client1.close_client()  # Close first connection
+                
                 if success:
-                    result = self.satellite_client.request("send_IM")
+                    # Step 2: send_IM with second connection
+                    client2 = PC2RPi_client(RPi="Pi_1", port=1515)
+                    client2.connect_client()
+                    
+                    result = client2.request("send_IM")
+                    client2.close_client()  # Close second connection
+                    
                     if isinstance(result, tuple) and result[0]:
-                        return result[1]  # Return the image
+                        image = result[1]
+                        import cv2
+                        cv2.imwrite("remote_captured_debug.png", image)
+                        return image
+                
                 return None
+                
             except Exception as e:
                 print(f"Remote capture error: {e}")
                 return None
         else:
             return self.local_camera.capture()
-
+    
     def get_preview_frame(self):
-        if self.is_remote_mode and self.satellite_client:
+        if self.is_remote_mode:
             try:
-                success = self.satellite_client.request("get_IM")
+                # Create fresh client for preview
+                from client_side import PC2RPi_client
+                client1 = PC2RPi_client(RPi="Pi_1", port=1515)
+                client1.connect_client()
+                
+                # Step 1: Request preview capture
+                success = client1.request("get_preview")
+                client1.close_client()
+                
                 if success:
-                    result = self.satellite_client.request("send_IM")
+                    # Step 2: Request the preview image data (separate connection)
+                    client2 = PC2RPi_client(RPi="Pi_1", port=1515)
+                    client2.connect_client()
+                    
+                    result = client2.request("send_preview")
+                    client2.close_client()
+                    
                     if isinstance(result, tuple) and result[0]:
-                        return result[1]  # Return the image
+                        image = result[1]
+                        return image
+                
                 return None
+                
             except Exception as e:
                 print(f"Remote preview error: {e}")
                 return None
         else:
             return self.local_camera.get_preview_frame()
-
+        
     def is_camera_ready(self):
         if self.is_remote_mode:
             return self.satellite_client is not None
@@ -91,6 +126,7 @@ class BackendManager:
         image = self.capture_image()
         if image is None:
             return 'Error - Could not capture before image'
+
         project_ID = self.create_project(depth_from, depth_to, core_numb, box_numb, BH_ID)
         boat_detected_IDs = self.tag_detector(image, '4')
         box_detected_IDs = self.tag_detector(image, '5')
@@ -155,25 +191,21 @@ class BackendManager:
         if preview_frame is None:
             return "ERROR - Cannot get camera frame"
         
-        # Debug: What tags are detected?
         boat_detected_IDs = self.tag_detector(preview_frame, '4')
         box_detected_IDs = self.tag_detector(preview_frame, '5')
         
-        print(f"DEBUG: Current project ID: {self.current_project_ID}")
-        print(f"DEBUG: Detected boat tags: {boat_detected_IDs}")
-        print(f"DEBUG: Detected box tags: {box_detected_IDs}")
+        print(f"Current project ID: {self.current_project_ID}")
+        print(f"Detected boat tags: {boat_detected_IDs}")
+        print(f"Detected box tags: {box_detected_IDs}")
         
-        # Debug: What tags should belong to this project?
+         
         expected_boats = self.db.get_boat_tags(self.current_project_ID)
         expected_boxes = self.db.get_box_tags(self.current_project_ID)
         
-        print(f"DEBUG: Expected boat tags for project {self.current_project_ID}: {expected_boats}")
-        print(f"DEBUG: Expected box tags for project {self.current_project_ID}: {expected_boxes}")
         
-        # Debug: Call verification and see what happens
         verification = self.verify_project_tags(self.current_project_ID, boat_detected_IDs, box_detected_IDs)
         
-        print(f"DEBUG: Verification returned: {verification}")
+        print(f"Verification returned: {verification}")
         
         if verification:
             return "Tags verified successfully"
@@ -242,33 +274,21 @@ class BackendManager:
     
     def set_remote_mode(self, remote_mode):
         self.is_remote_mode = remote_mode
+    
         if remote_mode:
             try:
                 from client_side import PC2RPi_client
-                self.satellite_client = PC2RPi_client(RPi="Pi_1", port=1515)
-                self.satellite_client.connect_client()
-                    
-                # Test connection
-                test_result = self.satellite_client.request("test")
-                if test_result:
-                    return True
-                else:
-                    self.is_remote_mode = False
-                    self.satellite_client = None
-                    return False
-                        
+                test_client = PC2RPi_client(RPi="Pi_1", port=1515)
+                test_client.connect_client()
+                result = test_client.request("test")
+                test_client.close_client()
+                return result
             except Exception as e:
-                print(f"Remote connection failed: {e}")
+                print(f"Remote connection test failed: {e}")
                 self.is_remote_mode = False
-                self.satellite_client = None
                 return False
-        else:
-            # Switch back to local
-            if self.satellite_client:
-                self.satellite_client.close_client()
-                self.satellite_client = None
-            return True
-            
-    
+        
+        return True
+        
         
 bk = BackendManager()

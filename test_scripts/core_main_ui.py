@@ -222,7 +222,6 @@ class CoreImagingUI:
     
     def capture_before_image(self):
         try:
-            print(f"=== DEBUG: current_project_ID = {self.current_project_ID}")
             if not self.local_camera_ready:
                 raise Exception("Local camera not initialized")
             if self.current_project_ID:
@@ -233,49 +232,39 @@ class CoreImagingUI:
                 os.makedirs("images", exist_ok=True)
                 
                 image = self.local_camera.capture()
-                print(f"=== DEBUG: Image captured, shape: {image.shape}")
+
                 
                 success = cv2.imwrite(filepath, image)
-                print(f"=== DEBUG: File save success: {success}")
                 
                 if success:
                     self.show_capture_feedback
                     self.update_status(f"✓ BEFORE image captured: {filename}")
                     
-                    print("=== DEBUG: About to call database update")
+
                     bk.update_before_image(self.current_project_ID, image)
-                    print("=== DEBUG: Database update completed")
-                    
-                    print("=== DEBUG: About to detect boat tags")
                     boat_detected_IDs = bk.tag_detector(image,'4')
-                    print(f"=== DEBUG: Boat tags result: {boat_detected_IDs}")
-                    
-                    print("=== DEBUG: About to detect box tags")
                     box_detected_IDs = bk.tag_detector(image, '5')
-                    print(f"=== DEBUG: Box tags result: {box_detected_IDs}")
                     
                     if boat_detected_IDs is not None:
                         for tag_ID in boat_detected_IDs.flatten():
-                            print(f"=== DEBUG: Inserting boat tag: {int(tag_ID)}")
                             bk.boat_tag_insert(int(tag_ID), self.current_project_ID)
                     
                     if box_detected_IDs is not None:
                         for tag_ID in box_detected_IDs.flatten():
-                            print(f"=== DEBUG: Inserting box tag: {int(tag_ID)}")
                             bk.box_tag_insert(int(tag_ID), self.current_project_ID)
                             
                     print(f"✓ BEFORE image saved to project {self.current_project_ID}")
                     self.update_status(f"✓ BEFORE image saved to project {self.current_project_ID}")
                     
                 else:
-                    print("=== DEBUG: File save failed!")
+                    print("File save failed!")
                     
             else:
-                print("=== DEBUG: No current project ID!")
+                print("No current project ID!")
                 tk.messagebox.showwarning(title="Ooops", message="Please create or select a project")
             
         except Exception as e:
-            print(f"=== DEBUG: Exception occurred: {str(e)}")
+            print(f"Exception occurred: {str(e)}")
             self.update_status(f"✗ BEFORE capture error: {str(e)}")
             
     

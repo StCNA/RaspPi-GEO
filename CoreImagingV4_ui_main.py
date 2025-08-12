@@ -33,7 +33,7 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.update_camera_preview()
         self.camera_timer = QTimer()
         self.camera_timer.timeout.connect(self.update_camera_preview)
-        self.camera_timer.start(100)
+        self.camera_timer.start(150)
         self.CamArea.setMinimumSize(QtCore.QSize(539, 400))
         self.cameraPreviewLabel.setMinimumSize(QtCore.QSize(539, 400)) 
         self.cameraPreviewLabel.setMaximumSize(QtCore.QSize(539, 400))
@@ -137,7 +137,7 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
                 self.update_status("Camera Error")
                 self.camera_error_logged = True
         
-    
+    #refresh product display when needed
     def update_project_display(self, depth_from, depth_to, core_number, box_number, bh_id, project_ID):
         boat_tags = self.bk.db.get_boat_tags(project_ID)
         box_tags = self.bk.db.get_box_tags(project_ID)
@@ -253,15 +253,15 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
     
     def remote_clicked(self):
         self.update_status("Switching to remote satellite camera...")
-        
+    
         success = self.bk.set_remote_mode(True)
         
         if success:
             self.update_status("SUCCESS: Connected to satellite camera!")
-            self.update_status("Now displaying satellite camera feed")
+            self.update_status("Remote mode active - all buttons now use satellite camera")
         else:
             self.update_status("ERROR: Failed to connect to satellite camera")
-
+            
     def local_clicked(self):
         self.update_status("Switching to local camera...")
         
@@ -315,7 +315,7 @@ class ProjectHistoryDialog(QDialog, Ui_ProjectHistory):
             if project_data:
                 bh_id, core_numb, depth_from, depth_to, box_numb = project_data
                 
-                # Update parent app
+                #update parent app
                 self.parent_app.bk.current_project_ID = project_id
                 self.parent_app.update_project_display(depth_from, depth_to, core_numb, box_numb, bh_id, project_id)
                 self.parent_app.check_add_boat_button_state()

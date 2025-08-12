@@ -35,7 +35,6 @@ if __name__ == "__main__":
     print("2. Press Enter to capture and test detection...")
     input()
     
-    # Capture real image
     image = camera.capture()
     
     if image is not None:
