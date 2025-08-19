@@ -16,6 +16,7 @@ from ProjectDetail_ui import Ui_ProjectDetailDialog
 from io import BytesIO
 import numpy as np
 from client_side import PC2RPi_client
+import cv2
 
 
 class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
@@ -79,6 +80,11 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.pushButton_5.clicked.connect(self.return_box_clicked)
         self.pushButton_6.clicked.connect(self.exit_clicked)
         self.pushButton_15.clicked.connect(self.open_project_history)
+        self.pushButton_7.clicked.connect(self.core_start_clicked)
+        self.pushButton_8.clicked.connect(self.core_end_clicked) 
+        self.pushButton_9.clicked.connect(self.meas_point_clicked)
+        self.pushButton_10.clicked.connect(self.avoid_start_clicked)
+        self.pushButton_11.clicked.connect(self.avoid_end_clicked)
         self.Remote.clicked.connect(self.remote_clicked)
         self.local.clicked.connect(self.local_clicked)
         
@@ -271,6 +277,46 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
             self.update_status("SUCCESS: Switched to local camera")
         else:
             self.update_status("ERROR: Failed to switch to local camera")
+    
+    def core_start_clicked(self):
+        self.update_status("CORE START measurement initiated")
+        self.update_status("Testing ArUco rectification...")
+        
+        # Capture current image
+        current_image = self.bk.capture_image()
+        if current_image is not None:
+            self.update_status("Image captured, attempting rectification...")
+            
+            # Test rectification
+            if hasattr(self.bk, 'ar'):
+                rectified = self.bk.ar.rectify_image(current_image)
+                if rectified is not None:
+                    # Save test images
+                    cv2.imwrite("test_original.jpg", current_image)
+                    cv2.imwrite("test_rectified.jpg", rectified)
+                    self.update_status("SUCCESS: Rectification complete!")
+                    self.update_status(f"Original image size: {current_image.shape}")
+                    self.update_status(f"Rectified image size: {rectified.shape}")
+                    self.update_status("Images saved: test_original.jpg, test_rectified.jpg")
+                else:
+                    self.update_status("ERROR: Rectification failed - check ArUco tag detection")
+                    self.update_status("Make sure tags 0, 1, 2, 3 (6x6 dictionary) are visible")
+            else:
+                self.update_status("ERROR: ArUco detector not initialized")
+        else:
+            self.update_status("ERROR: Failed to capture image")
+            
+    def core_end_clicked(self):
+        self.update_status("CORE END measurement initiated") 
+        
+    def meas_point_clicked(self):
+        self.update_status("MEASUREMENT POINT captured")
+        
+    def avoid_start_clicked(self):
+        self.update_status("AVOID START marked")
+        
+    def avoid_end_clicked(self):
+        self.update_status("AVOID END marked")
 
 class NewProjectDialog(QDialog, Ui_CreateNewProject):
     def __init__(self, parent=None):
@@ -358,7 +404,7 @@ class ProjectDetailDialog(QDialog, Ui_ProjectDetailDialog):
             project_data = self.parent_app.bk.db.c.fetchone()
             
             if project_data:
-                bh_id, core_numb, depth_from, depth_to, box_numb, before_img, after_img, boat1, boat2, boat3, boat4 = project_data
+                bh_id, core_numb, depth_from, depth_to, box_numb, before_path, after_path, boat1_path, boat2_path, boat3_path, boat4_path = project_data
                 
                 # Update project info
                 self.projectTitleLabel.setText(f"Project {self.project_id}")
@@ -377,8 +423,8 @@ Box tag: {box_display}
 Boat tags: {boat_display}"""
                 
                 self.projectInfoText.setPlainText(info_text)
-                self.load_before_after_images(before_img, after_img)
-                self.load_boat_images([boat1, boat2, boat3, boat4])
+                self.load_before_after_images(before_path, after_path)
+                self.load_boat_images([boat1_path, boat2_path, boat3_path, boat4_path])
                 
             else:
                 self.projectTitleLabel.setText("Project Not Found")
@@ -387,10 +433,10 @@ Boat tags: {boat_display}"""
             self.projectTitleLabel.setText("Error Loading Project")
             print(f"Error loading project data: {e}")
 
-    def load_before_after_images(self, before_blob, after_blob):
-        # load before image
-        if before_blob:
-            before_pixmap = self.blob_to_pixmap(before_blob)
+    def load_before_after_images(self, before_path, after_path):
+        # Load before image
+        if before_path:
+            before_pixmap = self.filepath_to_pixmap(before_path)
             if before_pixmap:
                 self.beforeImageLabel.setPixmap(before_pixmap)
             else:
@@ -398,9 +444,9 @@ Boat tags: {boat_display}"""
         else:
             self.beforeImageLabel.setText("No Before Image")
         
-        #Load after image
-        if after_blob:
-            after_pixmap = self.blob_to_pixmap(after_blob)
+        # Load after image
+        if after_path:
+            after_pixmap = self.filepath_to_pixmap(after_path)
             if after_pixmap:
                 self.afterImageLabel.setPixmap(after_pixmap)
             else:
@@ -408,13 +454,13 @@ Boat tags: {boat_display}"""
         else:
             self.afterImageLabel.setText("No After Image")
 
-    def load_boat_images(self, boat_blobs):
+    def load_boat_images(self, boat_paths):
         """Load and display boat images"""
         boat_labels = [self.addBoat1Image, self.addBoat2Image, self.addBoat3Image, self.addBoat4Image]
         
-        for i, blob in enumerate(boat_blobs):
-            if blob:
-                pixmap = self.blob_to_pixmap(blob)
+        for i, path in enumerate(boat_paths):
+            if path:
+                pixmap = self.filepath_to_pixmap(path)
                 if pixmap:
                     boat_labels[i].setPixmap(pixmap)
                 else:
@@ -422,23 +468,28 @@ Boat tags: {boat_display}"""
             else:
                 boat_labels[i].setText("No Image")
 
-    def blob_to_pixmap(self, blob_data):
-        """Convert BLOB data"""
+    def filepath_to_pixmap(self, file_path):
+        """Convert file path to pixmap"""
         try:
-            f = BytesIO(blob_data)
-            loaded_data = np.load(f)
-            numpy_array = loaded_data['frame']
+            # Load image directly with cv2
+            image = cv2.imread(file_path)
+            if image is None:
+                print(f"Could not load image from {file_path}")
+                return None
+                
+            # Convert BGR to RGB
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
-            # convert Numpy array
-            height, width, channel = numpy_array.shape
+            # Convert to QPixmap
+            height, width, channel = rgb_image.shape
             bytes_per_line = 3 * width
-            q_image = QImage(numpy_array.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+            q_image = QImage(rgb_image.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(q_image)
             
             return pixmap
             
         except Exception as e:
-            print(f"Error converting BLOB to pixmap: {e}")
+            print(f"Error loading image from {file_path}: {e}")
             return None
 
 

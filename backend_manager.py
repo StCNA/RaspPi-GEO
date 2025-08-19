@@ -32,7 +32,7 @@ class BackendManager:
     
     def update_before_image(self, project_ID, numpy_array):
         try:
-            self.db.update_before_image(project_ID, numpy_array)
+            return self.db.update_before_image(project_ID, numpy_array)
         except Exception as e:
             raise e
 
@@ -41,6 +41,7 @@ class BackendManager:
             return self.db.update_after_image(project_ID, numpy_array)
         except Exception as e:
             raise e
+    
 
     def release_project_tags(self, project_ID):
         self.db.release_project_tags(project_ID)
@@ -121,6 +122,24 @@ class BackendManager:
             return self.satellite_client is not None
         else:
             return self.local_camera.is_ready()
+    
+    def rectify_captured_image(self, image):
+        try:
+            # Attempt rectification
+            rectified = self.ar.rectify_image(image)
+            
+            if rectified is not None:
+                print("Image rectification successful")
+                return rectified
+            else:
+                print("Rectification failed - ArUco tags not detected or insufficient")
+                print("Saving original image instead")
+                return image
+                
+        except Exception as e:
+            print(f"Rectification error: {e}")
+            print("Saving original image instead")
+            return image
 
     def new_box_wrkflw(self, depth_from, depth_to, core_numb, box_numb, BH_ID):
         image = self.capture_image()
@@ -128,11 +147,18 @@ class BackendManager:
             return 'Error - Could not capture before image'
 
         project_ID = self.create_project(depth_from, depth_to, core_numb, box_numb, BH_ID)
+        
         boat_detected_IDs = self.tag_detector(image, '4')
         box_detected_IDs = self.tag_detector(image, '5')
+        position_aruco, corners = self.tag_detector(image, '6')
+        
+        # ALWAYS rectify the image before saving
+        rectified_image = self.rectify_captured_image(image)
         
         if boat_detected_IDs is None and box_detected_IDs is None:
-            return "NO_TAGS_DETECTED", project_ID, image
+            # Save rectified image (not original)
+            self.update_before_image(project_ID, rectified_image)
+            return "NO_TAGS_DETECTED", project_ID
         
         if boat_detected_IDs is not None:
             for tag_ID in boat_detected_IDs.flatten():
@@ -141,10 +167,12 @@ class BackendManager:
             for tag_ID in box_detected_IDs.flatten():
                 self.box_tag_insert(int(tag_ID), project_ID)
         
-        self.update_before_image(project_ID, image)
+        # Save rectified image (not original)
+        self.update_before_image(project_ID, rectified_image)
+        
         self.current_project_ID = project_ID
         return project_ID
-    
+
     def return_box_wrkflw(self):
         if not self.current_project_ID:
             return "ERROR - Must be in a project to take after image"
@@ -160,29 +188,41 @@ class BackendManager:
         if not verification:
             return "Verification failed - Please retake after image and verify tags"
         
-        self.update_after_image(self.current_project_ID, image)
+        # ALWAYS rectify the image before saving
+        rectified_image = self.rectify_captured_image(image)
+        
+        # Save rectified image (not original)
+        self.update_after_image(self.current_project_ID, rectified_image)
+        
         self.release_project_tags(self.current_project_ID)
         completed_project_ID = self.current_project_ID
         self.current_project_ID = None
         return f"Project {completed_project_ID} completed successfully"
-    
+
     def add_boat_wrkflw(self):
         if not self.current_project_ID:
             return "ERROR - Must be in a project to add boats"
-   
+
         boat_detection_frame = self.capture_image()
         if boat_detection_frame is None:
             return 'Error - Could not Add Boat'
+
         boat_detected_ID = self.tag_detector(boat_detection_frame, '4')
         if boat_detected_ID is not None:
             slot = self.db.find_next_boat_slot(self.current_project_ID)
             for tag_ID in boat_detected_ID.flatten():
                 self.boat_tag_insert(int(tag_ID), self.current_project_ID)
-            self.db.update_add_boat_img(self.current_project_ID, slot, boat_detection_frame)
+            
+            # ALWAYS rectify the image before saving
+            rectified_image = self.rectify_captured_image(boat_detection_frame)
+            
+            # Save rectified image (not original)
+            self.db.update_add_boat_img(self.current_project_ID, slot, rectified_image)
+            
             return "SUCCESS - Boat added"
         else:
             return "No Aruco Boat Tag detected - please reposition boat"
-    
+        
     def check_pair_wrkflw(self):
         if not self.current_project_ID:
             return "ERROR - Must be in a project to check tags"
@@ -289,6 +329,5 @@ class BackendManager:
                 return False
         
         return True
-        
-        
+
 bk = BackendManager()

@@ -25,18 +25,18 @@ class DbManager:
             FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
         
         self.c.execute("""CREATE TABLE IF NOT EXISTS project_table (
-            project_ID             INTEGER PRIMARY KEY AUTOINCREMENT,
-            depth_from             TEXT,
-            depth_to               TEXT,
-            core_numb              INTEGER,
-            box_numb               INTEGER,
-            BH_ID                  INTEGER,
-            before_image_data      BLOB,
-            after_image_data       BLOB,
-            add_boat_1             BLOB,
-            add_boat_2             BLOB,
-            add_boat_3             BLOB,
-            add_boat_4             BLOB
+            project_ID                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            depth_from                  TEXT,
+            depth_to                    TEXT,
+            core_numb                   INTEGER,
+            box_numb                    INTEGER,
+            BH_ID                       INTEGER,
+            before_image_data           TEXT,
+            after_image_data            TEXT,
+            add_boat_1                  TEXT,
+            add_boat_2                  TEXT,
+            add_boat_3                  TEXT,
+            add_boat_4                  TEXT
             )""")
         
         self.c.execute("""CREATE TABLE IF NOT EXISTS box_tag_table (
@@ -44,18 +44,6 @@ class DbManager:
             aruco_tag_number    INTEGER,
             project_ID          INTEGER,
             FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
-        
-        
-    
-    def insert_to_proj_tbl(self, depth_from, depth_to, core_numb, box_numb, BH_ID, numpy_array):
-            f = BytesIO()
-            np.savez_compressed(f, frame=numpy_array)
-            f.seek(0)
-            binary_data = f.read()
-            self.c.execute("INSERT INTO project_table VALUES (NULL,?,?,?,?,?)",(depth_from, depth_to, core_numb, box_numb, BH_ID, binary_data))
-            project_ID = 1000 + self.c.lastrowid
-            self.conn.commit()
-            return project_ID
         
     def boat_tag_insert(self, aruco_tag_number, project_ID):
         self.c.execute("INSERT INTO boat_tag_table VALUES(NULL,?,?)",(aruco_tag_number, project_ID))
@@ -79,39 +67,72 @@ class DbManager:
             self.c.execute("DELETE FROM project_table WHERE project_ID=?",(project_ID,))
             print(f"Project {project_ID} deleted from the database")
         else:
-            print(f"Project {project_ID} does not exisit")
+            print(f"Project {project_ID} does not exist")
         self.conn.commit()
+    
+    def get_image_filepath(self, BH_ID, core_numb, box_numb, depth_from, depth_to, image_type):
+        print(f"BH_ID: {BH_ID}, core_numb: {core_numb}, box_numb: {box_numb}")
+        print(f"depth_from: {depth_from}, depth_to: {depth_to}, image_type: {image_type}")
+        # create file name and path
+        if "rectified" in image_type:
+            base_folder = "/media/jeeves003/EMPTY DRIVE/core_imaging_data_rectified"
+        else:
+            base_folder = "/media/jeeves003/EMPTY DRIVE/core_imaging_data"
         
-    def image_to_binary(self, image_path):
+        filename = f"{str(BH_ID)}-{str(core_numb)}-{str(box_numb)}-{str(depth_from)}-{str(depth_to)}_{str(image_type)}.jpg"
+        filepath = f"{base_folder}/{filename}"
+        print(f"Generated filepath: {filepath}")
+        return filepath
+        
+    def save_image_to_file(self, numpy_array, filepath):
+        print(f"Saving image to file")
         try:
-            with open(image_path,'rb') as file:
-                binary_data = file.read()
-                print(f"Image converted  to binary: {len(binary_data)}bytes")
-                return binary_data
-        except FileNotFoundError:
-            print(f"file {image_path} not found")
-        except Exception as e:
-            print(f"Image transfer failed{e}")
+            # If it's bytes data, convert it first
+            if isinstance(numpy_array, bytes):
+                print("Converting bytes to numpy array")
+                f = BytesIO(numpy_array)
+                loaded_data = np.load(f)
+                numpy_array = loaded_data['frame']
+                print(f"Converted array shape: {numpy_array.shape}")
             
-    def numpy_to_binary(self, numpy_array):
-        try: 
-            import numpy as np 
-            # Use the same technique as server side
-            f = BytesIO() #create temp contianer
-            np.savez_compressed(f, frame=numpy_array) #compress array onto the temp container file
-            f.seek(0) #reset to the start of the file
-            binary_data = f.read() #f.read meaning write to the 'f' (temp file), 
+            #validate directory
+            directory = os.path.dirname(filepath)
+            print(f"Ensuring directory exists: {directory}")
+            os.makedirs(directory, exist_ok=True)
             
-            print(f"Numpy array converted to binary: {len(binary_data)} bytes")
-            print(f"Original size: {numpy_array.nbytes} bytes")
-            print(f"Compression ratio: {numpy_array.nbytes / len(binary_data):.2f}x smaller")
-            return binary_data
+            print("Converting BGR to RGB...")
+            rgb_array = cv2.cvtColor(numpy_array, cv2.COLOR_BGR2RGB)
+            
+            #save image
+            print(f"Saving image to: {filepath}")
+            success = cv2.imwrite(filepath, rgb_array)
+            if success:
+                print(f"Image saved successfully to {filepath}")
+                return True
+            else:
+                print(f"cv2.imwrite failed for {filepath}")
+                return False
+                
         except Exception as e:
-            print(f"Numpy conversion failed: {e}")
-            return None
-        
+            print(f"Error saving image to {filepath}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def get_image_type(self, workflow_type, slot_number=None):
+        print(f"Getting image type for workflow: {workflow_type}, slot: {slot_number}")
+        if workflow_type == "before":
+            result = "before_rectified" if is_rectified else "before"
+        elif workflow_type == "after": 
+            result = "after_rectified" if is_rectified else "after"
+        elif workflow_type == "boat" and slot_number:
+            result = f"boat_{slot_number}_rectified" if is_rectified else f"boat_{slot_number}"
+        else:
+            result = "unknown"
+        return result
         
     def retrieve_before_image(self, project_ID):
+        print(f"Retrieving after image for project {project_ID}")
         self.c.execute("SELECT before_image_data FROM project_table WHERE project_ID = ?", (project_ID,))
         result = self.c.fetchone()
 
@@ -119,17 +140,25 @@ class DbManager:
             print(f"There is no project with the Id: {project_ID}")
             return None
         
-        binary_data = result[0]
-        if binary_data is None:
+        file_path = result[0]
+        print(f"File path from database: {file_path}")
+        if file_path is None:
             print(f"Project {project_ID} exists but no BEFORE image stored")
             return None
         
-        f = BytesIO(binary_data)
-        loaded_data = np.load(f)
-        array = loaded_data['frame']
-        return array
+        try:
+            image = cv2.imread(file_path)
+            if image is not None:
+                print(f"Image loaded successfully from {file_path}")
+            else:
+                print(f"Failed to load image from {file_path}")
+            return image
+        except Exception as e:
+            print(f"Error loading image from {file_path}: {e}")
+            return None
 
     def retrieve_after_image(self, project_ID):
+        print(f"Retrieving after image for project {project_ID}")
         self.c.execute("SELECT after_image_data FROM project_table WHERE project_ID = ?", (project_ID,))
         result = self.c.fetchone()
 
@@ -137,18 +166,25 @@ class DbManager:
             print(f"There is no project with the Id: {project_ID}")
             return None
         
-        binary_data = result[0]
-        if binary_data is None:
+        file_path = result[0]
+        print(f"File path from database: {file_path}")
+        if file_path is None:
             print(f"Project {project_ID} exists but no AFTER image stored")
             return None
         
-        f = BytesIO(binary_data)
-        loaded_data = np.load(f)
-        array = loaded_data['frame']
-        return array
-   
+        try:
+            image = cv2.imread(file_path)
+            if image is not None:
+                print(f"Image loaded successfully from {file_path}")
+            else:
+                print(f"Failed to load image from {file_path}")
+            return image
+        except Exception as e:
+            print(f"Error loading image from {file_path}: {e}")
+            return None
+        
     def check_project_status(self):
-        print("====Checking Project Status====")
+        print("Checking project status")
         if not self.current_project_id:
             print("No active project selected")
             return False
@@ -156,9 +192,8 @@ class DbManager:
             print(f"Active Project: {self.current_project_id}")
             return True
 
-    
     def check_database_projects(self):
-        print("=== Database Contents ===")
+        print("Database Contents")
         self.c.execute("SELECT project_ID, depth_from, depth_to, core_numb, box_numb, BH_ID FROM project_table")
         projects = self.c.fetchall()
         
@@ -167,32 +202,70 @@ class DbManager:
             print(f"Project {project[0]}: {project[1]} to {project[2]}, Box {project[3]}")
             
     def create_project(self, depth_from, depth_to, core_numb, box_numb, BH_ID):
-        # Create project with NULL for both images
+        print(f"Creating project: BH_ID={BH_ID}, core={core_numb}, box={box_numb}")
+        # Create project with NULL for all images
         self.c.execute("INSERT INTO project_table VALUES (NULL,?,?,?,?,?,NULL,NULL,NULL,NULL,NULL,NULL)",
                     (depth_from, depth_to, core_numb, box_numb, BH_ID))
         project_ID = self.c.lastrowid
         self.conn.commit()
+        print(f"Project created with ID: {project_ID}")
         return project_ID
     
-    def update_before_image(self, project_ID, numpy_array):        
-        f = BytesIO()
-        np.savez_compressed(f, frame=numpy_array)
-        f.seek(0)
-        binary_data = f.read()
-        self.c.execute("UPDATE project_table SET before_image_data=? WHERE project_ID=?",
-                    (binary_data, project_ID))
-        self.conn.commit()
-        print(f"BEFORE image updated for project {project_ID}")
+    def update_before_image(self, project_ID, rectified_image):
+        # Get project data
+        self.c.execute("SELECT BH_ID, core_numb, box_numb, depth_from, depth_to FROM project_table WHERE project_ID = ?", (project_ID,))
+        project_data = self.c.fetchone()
+        
+        if project_data is None:
+            return False
+            
+        BH_ID, core_numb, box_numb, depth_from, depth_to = project_data
+        image_type = self.get_image_type("before")
+        
+        # Save original image to file (not in database)
+        original_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type, is_rectified=False)
+        self.save_image_to_file(original_image, original_path)
+        
+        # Save rectified image to file AND database
+        rectified_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type, is_rectified=True)
+        if self.save_image_to_file(rectified_image, rectified_path):
+            # Store ONLY rectified path in database
+            self.c.execute("UPDATE project_table SET before_image_data=? WHERE project_ID=?", (rectified_path, project_ID))
+            self.conn.commit()
+            return True
+        return False
         
     def update_after_image(self, project_ID, numpy_array):
-        f = BytesIO()
-        np.savez_compressed(f, frame=numpy_array)
-        f.seek(0)
-        binary_data = f.read()
-        self.c.execute("UPDATE project_table SET after_image_data=? WHERE project_ID=?",
-                    (binary_data, project_ID))
-        self.conn.commit()
-        print(f"AFTER image updated for project {project_ID}")
+        print(f"Updating after image for project {project_ID}")
+        print(f"Data type received: {type(numpy_array)}")
+        
+        self.c.execute("SELECT BH_ID, core_numb, box_numb, depth_from, depth_to FROM project_table WHERE project_ID = ?", (project_ID,))
+        project_data = self.c.fetchone()
+        
+        if project_data is None:
+            print(f"Project {project_ID} not found")
+            return False
+            
+        BH_ID, core_numb, box_numb, depth_from, depth_to = project_data
+        print(f"Project data: {project_data}")
+        
+        # Generate file path
+        image_type = self.get_image_type("after")
+        file_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type)
+        print(f"Generated file path: {file_path}")
+        
+        # Save image to file
+        print("About to call save_image_to_file...")
+        if self.save_image_to_file(numpy_array, file_path):
+            # Store file path in database
+            print("Updating database with file path...")
+            self.c.execute("UPDATE project_table SET after_image_data=? WHERE project_ID=?", (file_path, project_ID))
+            self.conn.commit()
+            print(f"AFTER image updated for project {project_ID}")
+            return True
+        else:
+            print(f"Failed to save after image for project {project_ID}")
+            return False
         
     def release_project_tags(self, project_ID):
         self.c.execute("UPDATE boat_tag_table SET project_ID = NULL WHERE project_ID = ?", (project_ID,))
@@ -204,7 +277,7 @@ class DbManager:
         if detected_boat_tags is None and detected_box_tags is None:
             return False
         
-        # Check boat tags if any were detected
+        # Check boat tags 
         if detected_boat_tags is not None:
             for tag_num in detected_boat_tags.flatten():
                 self.c.execute("SELECT * FROM boat_tag_table WHERE aruco_tag_number = ? AND project_ID = ?", (str(tag_num), project_ID))
@@ -212,7 +285,7 @@ class DbManager:
                     print(f"Boat tag {tag_num} does not belong to project {project_ID}")
                     return False
         
-        # Check box tags if any were detected  
+        # Check box tags  
         if detected_box_tags is not None:
             for tag_num in detected_box_tags.flatten():
                 self.c.execute("SELECT * FROM box_tag_table WHERE aruco_tag_number = ? AND project_ID = ?", (str(tag_num), project_ID))
@@ -243,7 +316,7 @@ class DbManager:
     def get_recent_projects(self, limit=20):
         self.c.execute("SELECT project_ID, BH_ID, core_numb FROM project_table ORDER BY project_ID DESC LIMIT ?", (limit,))
         projects = self.c.fetchall()   
-        project_list = [] #create empty list to add 'pseudo variable'
+        project_list = [] #create empty list to add 
         for project in projects:
             project_id, bh_id, core_numb = project # unpack the tuple 
             self.c.execute("SELECT after_image_data FROM project_table WHERE project_ID = ?", (project_id,))
@@ -261,7 +334,8 @@ class DbManager:
         if added_boat is not None and added_boat[0] is not None:
             return True
         return False
-    #where to place the next boat slot (wether 1,2,3)
+    
+    #where to place the next boat slot (whether 1,2,3)
     def find_next_boat_slot(self, project_ID):
         self.c.execute("SELECT add_boat_1, add_boat_2, add_boat_3, add_boat_4 FROM project_table WHERE project_ID = ?", (project_ID,))
         boat_slots = self.c.fetchone()
@@ -272,14 +346,39 @@ class DbManager:
         return None  
     
     def update_add_boat_img(self, project_ID, slot_number, numpy_array):
-        f = BytesIO()
-        np.savez_compressed(f, frame=numpy_array)
-        f.seek(0)
-        binary_data = f.read()
+        print(f"Project ID: {project_ID}, Slot: {slot_number}")
+        print(f"Data type received: {type(numpy_array)}")
         
-        column_name = f"add_boat_{slot_number}"
-        query = f"UPDATE project_table SET {column_name} = ? WHERE project_ID = ?"
-        self.c.execute(query, (binary_data, project_ID))
-        self.conn.commit()
-                       
+        self.c.execute("SELECT BH_ID, core_numb, box_numb, depth_from, depth_to FROM project_table WHERE project_ID = ?", (project_ID,))
+        project_data = self.c.fetchone()
+        
+        if project_data is None:
+            print(f"Project {project_ID} not found")
+            return False
+            
+        BH_ID, core_numb, box_numb, depth_from, depth_to = project_data
+        print(f"Project data: {project_data}")
+        
+        # Generate file path
+        image_type = self.get_image_type("boat", slot_number)
+        file_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type)
+        print(f"Generated file path: {file_path}")
+        
+        # Save image to file
+        print("About to call save_image_to_file...")
+        if self.save_image_to_file(numpy_array, file_path):
+            # Store file path in database
+            print("Updating database with file path...")
+            column_name = f"add_boat_{slot_number}"
+            query = f"UPDATE project_table SET {column_name} = ? WHERE project_ID = ?"
+            self.c.execute(query, (file_path, project_ID))
+            self.conn.commit()
+            print(f"BOAT {slot_number} image updated for project {project_ID}")
+            return True
+        else:
+            print(f"Failed to save boat {slot_number} image for project {project_ID}")
+            return False
+    
+
+    
 db = DbManager()
