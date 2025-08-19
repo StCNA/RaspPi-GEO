@@ -162,11 +162,18 @@ class BackendManager:
         
         if boat_detected_IDs is not None:
             for tag_ID in boat_detected_IDs.flatten():
-                self.boat_tag_insert(int(tag_ID), project_ID)
+                if self.db.is_aruco_tag_available(int(tag_ID), 'boat'):
+                    self.boat_tag_insert(int(tag_ID), project_ID)
+                else:
+                    print(f"WARNING: Boat tag {tag_ID} is already in use - skipped")
+
         if box_detected_IDs is not None:
             for tag_ID in box_detected_IDs.flatten():
-                self.box_tag_insert(int(tag_ID), project_ID)
-        
+                if self.db.is_aruco_tag_available(int(tag_ID), 'box'):
+                    self.box_tag_insert(int(tag_ID), project_ID)
+                else:
+                    print(f"WARNING: Box tag {tag_ID} is already in use - skipped")
+                    
         # Save rectified image (not original)
         self.update_before_image(project_ID, rectified_image)
         

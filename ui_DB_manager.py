@@ -122,11 +122,11 @@ class DbManager:
     def get_image_type(self, workflow_type, slot_number=None):
         print(f"Getting image type for workflow: {workflow_type}, slot: {slot_number}")
         if workflow_type == "before":
-            result = "before_rectified" if is_rectified else "before"
+            result = "before"
         elif workflow_type == "after": 
-            result = "after_rectified" if is_rectified else "after"
+            result = "after"
         elif workflow_type == "boat" and slot_number:
-            result = f"boat_{slot_number}_rectified" if is_rectified else f"boat_{slot_number}"
+            result = f"boat_{slot_number}"
         else:
             result = "unknown"
         return result
@@ -211,29 +211,37 @@ class DbManager:
         print(f"Project created with ID: {project_ID}")
         return project_ID
     
-    def update_before_image(self, project_ID, rectified_image):
-        # Get project data
+    def update_before_image(self, project_ID, numpy_array):
+        print(f"Updating before image for project {project_ID}")
+        print(f"Data type received: {type(numpy_array)}")
+        
         self.c.execute("SELECT BH_ID, core_numb, box_numb, depth_from, depth_to FROM project_table WHERE project_ID = ?", (project_ID,))
         project_data = self.c.fetchone()
         
         if project_data is None:
+            print(f"Project {project_ID} not found")
             return False
             
         BH_ID, core_numb, box_numb, depth_from, depth_to = project_data
+        print(f"Project data: {project_data}")
+        
+        # Generate file path (rectified image)
         image_type = self.get_image_type("before")
+        file_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type)
+        print(f"Generated file path: {file_path}")
         
-        # Save original image to file (not in database)
-        original_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type, is_rectified=False)
-        self.save_image_to_file(original_image, original_path)
-        
-        # Save rectified image to file AND database
-        rectified_path = self.get_image_filepath(BH_ID, core_numb, box_numb, depth_from, depth_to, image_type, is_rectified=True)
-        if self.save_image_to_file(rectified_image, rectified_path):
-            # Store ONLY rectified path in database
-            self.c.execute("UPDATE project_table SET before_image_data=? WHERE project_ID=?", (rectified_path, project_ID))
+        # Save rectified image to file
+        print("About to call save_image_to_file...")
+        if self.save_image_to_file(numpy_array, file_path):
+            # Store file path in database
+            print("Updating database with file path...")
+            self.c.execute("UPDATE project_table SET before_image_data=? WHERE project_ID=?", (file_path, project_ID))
             self.conn.commit()
+            print(f"BEFORE image updated for project {project_ID}")
             return True
-        return False
+        else:
+            print(f"Failed to save before image for project {project_ID}")
+            return False
         
     def update_after_image(self, project_ID, numpy_array):
         print(f"Updating after image for project {project_ID}")
@@ -379,6 +387,28 @@ class DbManager:
             print(f"Failed to save boat {slot_number} image for project {project_ID}")
             return False
     
+    def is_aruco_tag_available(self, tag_number, tag_type):
+        if tag_type == 'boat':
+            self.c.execute("SELECT project_ID FROM boat_tag_table WHERE aruco_tag_number = ? AND project_ID IS NOT NULL", (tag_number,))
+        elif tag_type == 'box':
+            self.c.execute("SELECT project_ID FROM box_tag_table WHERE aruco_tag_number = ? AND project_ID IS NOT NULL", (tag_number,))
+        else:
+            return False
+        
+        result = self.c.fetchone()
+        if result:
+            print(f"ArUco tag {tag_number} ({tag_type}) is already in use by project {result[0]}")
+            return False
+        return True
+
+    def get_available_tags(self, tag_type):
+        """Get list of available ArUco tags (0-49)"""
+        available_tags = []
+        for tag_num in range(50):  # 0-49
+            if self.is_aruco_tag_available(tag_num, tag_type):
+                available_tags.append(tag_num)
+        return available_tags
+        
 
     
 db = DbManager()
