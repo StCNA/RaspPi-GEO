@@ -402,13 +402,12 @@ class DbManager:
         return True
 
     def get_available_tags(self, tag_type):
-        """Get list of available ArUco tags (0-49)"""
         available_tags = []
         for tag_num in range(50):  # 0-49
             if self.is_aruco_tag_available(tag_num, tag_type):
                 available_tags.append(tag_num)
         return available_tags
-        
+
 
     
 db = DbManager()

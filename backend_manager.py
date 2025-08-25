@@ -174,7 +174,7 @@ class BackendManager:
                 else:
                     print(f"WARNING: Box tag {tag_ID} is already in use - skipped")
                     
-        # Save rectified image (not original)
+        # Save rectified image 
         self.update_before_image(project_ID, rectified_image)
         
         self.current_project_ID = project_ID
@@ -190,10 +190,6 @@ class BackendManager:
         
         boat_detected_IDs = self.tag_detector(image, '4')
         box_detected_IDs = self.tag_detector(image, '5')
-        
-        verification = self.verify_project_tags(self.current_project_ID, boat_detected_IDs, box_detected_IDs)
-        if not verification:
-            return "Verification failed - Please retake after image and verify tags"
         
         # ALWAYS rectify the image before saving
         rectified_image = self.rectify_captured_image(image)
@@ -216,20 +212,23 @@ class BackendManager:
 
         boat_detected_ID = self.tag_detector(boat_detection_frame, '4')
         if boat_detected_ID is not None:
+            # Check for tag conflicts BEFORE adding
+            for tag_ID in boat_detected_ID.flatten():
+                if not self.db.is_aruco_tag_available(int(tag_ID), 'boat'):
+                    return f"TAG_IN_USE_BOAT_{tag_ID}"
+            
+            # all tags are available - proceed
             slot = self.db.find_next_boat_slot(self.current_project_ID)
             for tag_ID in boat_detected_ID.flatten():
                 self.boat_tag_insert(int(tag_ID), self.current_project_ID)
             
-            # ALWAYS rectify the image before saving
             rectified_image = self.rectify_captured_image(boat_detection_frame)
-            
-            # Save rectified image (not original)
             self.db.update_add_boat_img(self.current_project_ID, slot, rectified_image)
             
             return "SUCCESS - Boat added"
         else:
             return "No Aruco Boat Tag detected - please reposition boat"
-        
+            
     def check_pair_wrkflw(self):
         if not self.current_project_ID:
             return "ERROR - Must be in a project to check tags"

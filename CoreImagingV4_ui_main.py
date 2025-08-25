@@ -103,7 +103,14 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
             
             result = self.bk.new_box_wrkflw(depth_from, depth_to, core_number, box_number, bh_id)
             
-            if isinstance(result, tuple) and result[0] == 'NO_TAGS_DETECTED':
+            if isinstance(result, tuple) and "TAG_IN_USE" in result[0]:
+                tag_info = result[0].split("_")
+                tag_type = tag_info[3].lower()  # boat or box
+                tag_number = tag_info[4]
+                self.update_status(f"WARNING: {tag_type} tag {tag_number} already in use by another project")
+                return
+            
+            elif isinstance(result, tuple) and result[0] == 'NO_TAGS_DETECTED':
                 self.update_status("WARNING: No ArUco tags detected in image")
                 reply = QMessageBox.question(self, 'No Tags Detected', 
                                             'No ArUco tags were detected in the image.\n\nContinue anyway?',
@@ -117,11 +124,13 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
                 else:
                     self.update_status("Project creation cancelled by user")
                     return
+            
             elif result:  
                 project_id = result
                 self.bk.current_project_ID = result
                 self.update_project_display(depth_from, depth_to, core_number, box_number, bh_id, project_id)
                 self.update_status(f"Project {project_id} created successfully")
+                
         else:
             self.update_status("New box creation cancelled")
 
@@ -177,7 +186,13 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
     def add_boat_clicked(self):
         self.update_status("ADD BOAT workflow initiated")
         result = self.bk.add_boat_wrkflw()
-        if result:
+        
+        if result and "TAG_IN_USE" in result:
+            tag_info = result.split("_")
+            tag_number = tag_info[3]
+            self.update_status(f"WARNING: boat tag {tag_number} already in use by another project")
+            return
+        if result and "SUCCESS" in result:
             self.update_status(f"Boat added successfully: {result}")
             self.refresh_current_project_display()
         else:
@@ -392,7 +407,6 @@ class ProjectDetailDialog(QDialog, Ui_ProjectDetailDialog):
         self.load_project_data()
         
     def load_project_data(self):
-        """Load all project data from database and display"""
         try:
             self.parent_app.bk.db.c.execute("""
                 SELECT BH_ID, core_numb, depth_from, depth_to, box_numb, 
@@ -455,7 +469,6 @@ Boat tags: {boat_display}"""
             self.afterImageLabel.setText("No After Image")
 
     def load_boat_images(self, boat_paths):
-        """Load and display boat images"""
         boat_labels = [self.addBoat1Image, self.addBoat2Image, self.addBoat3Image, self.addBoat4Image]
         
         for i, path in enumerate(boat_paths):
@@ -469,7 +482,6 @@ Boat tags: {boat_display}"""
                 boat_labels[i].setText("No Image")
 
     def filepath_to_pixmap(self, file_path):
-        """Convert file path to pixmap"""
         try:
             # Load image directly with cv2
             image = cv2.imread(file_path)
