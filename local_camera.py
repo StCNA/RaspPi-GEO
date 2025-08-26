@@ -85,14 +85,14 @@ class LocalCAM(object):
         # set references
         self.camera = None
         self.rawCapture = None
-        #camera controls
-        self.set_autofocus()
         # set initial resolution and iso
         self.set_cam_resolution(cam_width, cam_height)
         self.set_im_resolution(im_width, im_height)
         self.set_cam_iso(iso)
         # initialize camera
         self.init_camera()
+        #camera controls
+        self.set_autofocus()
         # turn off top light and background light
         self.set_top_light(switch="OFF")
         # mark cam as ready
@@ -224,8 +224,8 @@ class LocalCAM(object):
         
         # Set ISO equivalent (AnalogueGain) and white balance
             controls = {
-                "AwbEnable": False,                    # Disable auto white balance  
-                "ColourGains": (1.4, 1.5),           # Set manual red and blue gains
+                "AwbEnable": True,                    # Disable auto white balance  
+                #"ColourGains": (1.4, 1.5),           # Set manual red and blue gains
                 "AnalogueGain": self.iso / 100.0      # Convert ISO to gain (100 ISO = 1.0 gain)
             }
             camera.set_controls(controls)
@@ -254,10 +254,11 @@ class LocalCAM(object):
         try:
             # PiCamera2 captures directly to numpy array
             image = self.camera.capture_array("main")
-        
+
+            # vestigial code, can be removed. 
             # Convert if needed for OpenCV compatibility, ensure in rgb
-            if len(image.shape) == 3:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            #if len(image.shape) == 3:
+             #   image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         
             return image
         
