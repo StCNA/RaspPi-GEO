@@ -18,14 +18,21 @@ class ArUcoDetector:
         self.pixel_density = 5
         
     def tag_detector(self, image, tag_type):
-        if tag_type == '4' :
+        if tag_type == '4':
             corners, ids, rejected = aruco.detectMarkers(image, self.boat_dictionary, parameters=self.parameters)
+            print(f"Boat tags - Detected: {len(ids) if ids is not None else 0}, Rejected: {len(rejected)}")
+            if len(rejected) > 0:
+                print(f"Found {len(rejected)} rejected boat tag candidates")
             return ids
         elif tag_type == '5':
             corners, ids, rejected = aruco.detectMarkers(image, self.box_dictionary, parameters=self.parameters)
+            print(f"Box tags - Detected: {len(ids) if ids is not None else 0}, Rejected: {len(rejected)}")
+            if len(rejected) > 0:
+                print(f"Found {len(rejected)} rejected box tag candidates")
             return ids
         elif tag_type == '6':
             corners, ids, rejected = aruco.detectMarkers(image, self.position_aruco, parameters=self.parameters)
+            print(f"Position tags - Detected: {len(ids) if ids is not None else 0}, Rejected: {len(rejected)}")
             return ids, corners
         else: 
             print("Tag does not exist in this file")

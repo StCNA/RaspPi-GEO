@@ -6,7 +6,6 @@ import cv2
 from datetime import datetime
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 
-
 class BackendManager:
     def __init__(self):
         self.ar = ArUcoDetector()
@@ -16,6 +15,7 @@ class BackendManager:
         self.current_project_ID = None
         self.is_remote_mode = False
         self.satellite_client = None
+        self.status_callback = None
 
     
     def insert_to_proj_tbl(self, depth_from, depth_to, core_numb, box_numb, BH_ID, numpy_array):
@@ -165,14 +165,14 @@ class BackendManager:
                 if self.db.is_aruco_tag_available(int(tag_ID), 'boat'):
                     self.boat_tag_insert(int(tag_ID), project_ID)
                 else:
-                    print(f"WARNING: Boat tag {tag_ID} is already in use - skipped")
+                    return "TAG_IN_USE"
 
         if box_detected_IDs is not None:
             for tag_ID in box_detected_IDs.flatten():
                 if self.db.is_aruco_tag_available(int(tag_ID), 'box'):
                     self.box_tag_insert(int(tag_ID), project_ID)
                 else:
-                    print(f"WARNING: Box tag {tag_ID} is already in use - skipped")
+                    return "TAG_IN_USE"
                     
         # Save rectified image 
         self.update_before_image(project_ID, rectified_image)
@@ -215,7 +215,8 @@ class BackendManager:
             # Check for tag conflicts BEFORE adding
             for tag_ID in boat_detected_ID.flatten():
                 if not self.db.is_aruco_tag_available(int(tag_ID), 'boat'):
-                    return f"TAG_IN_USE_BOAT_{tag_ID}"
+                    project_id = self.db.get_tag_project_id(int(tag_ID), 'boat')
+                    return "TAG_CONFLICT"
             
             # all tags are available - proceed
             slot = self.db.find_next_boat_slot(self.current_project_ID)
@@ -228,7 +229,7 @@ class BackendManager:
             return "SUCCESS - Boat added"
         else:
             return "No Aruco Boat Tag detected - please reposition boat"
-            
+        
     def check_pair_wrkflw(self):
         if not self.current_project_ID:
             return "ERROR - Must be in a project to check tags"
@@ -318,9 +319,10 @@ class BackendManager:
             print(f"Error writing current project file: {e}")
             
     
+    
     def set_remote_mode(self, remote_mode):
         self.is_remote_mode = remote_mode
-    
+
         if remote_mode:
             try:
                 from client_side import PC2RPi_client
@@ -332,7 +334,7 @@ class BackendManager:
             except Exception as e:
                 print(f"Remote connection test failed: {e}")
                 self.is_remote_mode = False
-                return False
+                return "REMOTE_CONNECTION_FAILED"  # Return specific error instead of False
         
         return True
 

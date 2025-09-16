@@ -103,13 +103,12 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
             
             result = self.bk.new_box_wrkflw(depth_from, depth_to, core_number, box_number, bh_id)
             
-            if isinstance(result, tuple) and "TAG_IN_USE" in result[0]:
-                tag_info = result[0].split("_")
-                tag_type = tag_info[3].lower()  # boat or box
-                tag_number = tag_info[4]
-                self.update_status(f"WARNING: {tag_type} tag {tag_number} already in use by another project")
+            if result == "TAG_IN_USE":
+                
+                self.update_status("WARNING: Tag already in use")
                 return
-            
+                
+      
             elif isinstance(result, tuple) and result[0] == 'NO_TAGS_DETECTED':
                 self.update_status("WARNING: No ArUco tags detected in image")
                 reply = QMessageBox.question(self, 'No Tags Detected', 
@@ -277,11 +276,15 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
     
         success = self.bk.set_remote_mode(True)
         
-        if success:
+        if success == True:
             self.update_status("SUCCESS: Connected to satellite camera!")
             self.update_status("Remote mode active - all buttons now use satellite camera")
+        elif success == "REMOTE_CONNECTION_FAILED":
+            self.update_status("ERROR: Remote satellite camera not connected")
+            self.local.setChecked(True)  
         else:
             self.update_status("ERROR: Failed to connect to satellite camera")
+            self.local.setChecked(True)  # Switch back to local camera
             
     def local_clicked(self):
         self.update_status("Switching to local camera...")
@@ -503,7 +506,8 @@ Boat tags: {boat_display}"""
         except Exception as e:
             print(f"Error loading image from {file_path}: {e}")
             return None
-
+        
+    
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -107,8 +107,7 @@ class PC2RPi_client():
             self.sock.connect((self.host, self.port))
         except socket.error :
             # report error to logger
-            logger.error("PC2RPi_client - failed to connect client socket to RPi 1515 port")
-            sys.exit()
+            raise Exception ("PC2RPi_client - failed to connect client socket to RPi 1515 port")
     
     def request(self, message=''):
         
@@ -226,9 +225,8 @@ class PC2RPi_client():
                 # get the reply
                 data = self.get_message().decode("utf-8")
                 if data == "preview done":
-                    print("DEBUG CLIENT: get_preview successful")
                     return True
-                print("DEBUG CLIENT: get_preview failed")
+                print("get_preview failed")
                 return False
 
             #------------------------------

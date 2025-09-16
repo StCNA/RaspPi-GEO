@@ -1,3 +1,4 @@
+
 try:
     import copy
     #from Crypto.Cipher import AES
@@ -233,8 +234,6 @@ class LocalCAM(object):
             # NOW assign to self.camera
             self.camera = camera
         
-            # Remove rawCapture - PiCamera2 doesn't need it
-            # self.rawCapture = None  # Not needed for PiCamera2
         
             print("Camera initialized successfully")
         
@@ -254,11 +253,6 @@ class LocalCAM(object):
         try:
             # PiCamera2 captures directly to numpy array
             image = self.camera.capture_array("main")
-
-            # vestigial code, can be removed. 
-            # Convert if needed for OpenCV compatibility, ensure in rgb
-            #if len(image.shape) == 3:
-             #   image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         
             return image
         

@@ -407,6 +407,14 @@ class DbManager:
             if self.is_aruco_tag_available(tag_num, tag_type):
                 available_tags.append(tag_num)
         return available_tags
+    
+    def get_tag_project_id(self, tag_number, tag_type):
+        if tag_type.lower() == 'boat':
+            self.c.execute("SELECT project_ID FROM boat_tag_table WHERE aruco_tag_number = ? AND project_ID IS NOT NULL", (tag_number,))
+        elif tag_type.lower() == 'box':
+            self.c.execute("SELECT project_ID FROM box_tag_table WHERE aruco_tag_number = ? AND project_ID IS NOT NULL", (tag_number,))
+        result = self.c.fetchone()
+        return result[0] if result else None
 
 
     
