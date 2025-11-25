@@ -18,11 +18,6 @@ class DbManager:
         self.create_tables()
         
     def create_tables(self):
-        self.c.execute("""CREATE TABLE IF NOT EXISTS boat_tag_table (
-            tag_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
-            aruco_tag_number    INTEGER,
-            project_ID          INTEGER,
-            FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
         
         self.c.execute("""CREATE TABLE IF NOT EXISTS project_table (
             project_ID                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,11 +34,31 @@ class DbManager:
             add_boat_4                  TEXT
             )""")
         
+        self.c.execute("""CREATE TABLE IF NOT EXISTS boat_tag_table (
+            tag_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
+            aruco_tag_number    INTEGER,
+            project_ID          INTEGER,
+            FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
+          
         self.c.execute("""CREATE TABLE IF NOT EXISTS box_tag_table (
             tag_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
             aruco_tag_number    INTEGER,
             project_ID          INTEGER,
             FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
+        
+        self.c.execute("""CREATE TABLE IF NOT EXISTS slider_position_table (
+            measurement_id          INTEGER PRIMARY KEY AUTOINCREMENT, 
+            slider_position_mm      INTEGER,
+            aruco_tag_number        INTEGER,
+            measurement_type        TEXT,
+            project_ID              INTEGER,
+            boat_tag_number         INTEGER,
+            FOREIGN KEY (project_ID) REFERENCES project_table (project_ID))""")
+        
+        self.conn.commit()
+            
+            
+        
         
     def boat_tag_insert(self, aruco_tag_number, project_ID):
         self.c.execute("INSERT INTO boat_tag_table VALUES(NULL,?,?)",(aruco_tag_number, project_ID))
@@ -415,6 +430,47 @@ class DbManager:
             self.c.execute("SELECT project_ID FROM box_tag_table WHERE aruco_tag_number = ? AND project_ID IS NOT NULL", (tag_number,))
         result = self.c.fetchone()
         return result[0] if result else None
+    
+
+    def store_measurement_with_boat(self, project_ID, measurement_type, position_mm, boat_tag_number, aruco_tag_number=4):
+        self.c.execute("""INSERT INTO slider_position_table 
+                        (slider_position_mm, aruco_tag_number, measurement_type, project_ID, boat_tag_number) 
+                        VALUES (?, ?, ?, ?, ?)""",
+                    (position_mm, aruco_tag_number, measurement_type, project_ID, boat_tag_number))
+        self.conn.commit()
+        print(f"Measurement stored: {measurement_type} at {position_mm}mm for boat {boat_tag_number}, project {project_ID}")
+
+    def get_project_measurements(self, project_ID):
+        self.c.execute("""SELECT measurement_type, slider_position_mm, aruco_tag_number 
+                        FROM slider_position_table 
+                        WHERE project_ID = ? 
+                        ORDER BY measurement_id""", (project_ID,))
+        return self.c.fetchall()
+    
+    def get_core_boundary(self, project_ID, measurement_type):
+        self.c.execute("""SELECT slider_position_mm, boat_tag_number 
+                        FROM slider_position_table 
+                        WHERE project_ID = ? AND measurement_type = ?""", 
+                    (project_ID, measurement_type))
+        return self.c.fetchone()
+
+    def update_measurement(self, project_ID, measurement_type, position_mm, boat_tag_number):
+        self.c.execute("""UPDATE slider_position_table 
+                        SET slider_position_mm = ?, boat_tag_number = ?
+                        WHERE project_ID = ? AND measurement_type = ?""",
+                    (position_mm, boat_tag_number, project_ID, measurement_type))
+        self.conn.commit()
+        print(f"Measurement updated: {measurement_type} at {position_mm}mm for boat {boat_tag_number}, project {project_ID}")
+        
+    def delete_project_measurements(self, project_ID):
+        self.c.execute("DELETE FROM slider_position_table WHERE project_ID = ?", (project_ID,))
+        self.conn.commit()
+        deleted_count = self.c.rowcount
+        print(f"Deleted {deleted_count} measurements from project {project_ID}")
+        return deleted_count
+    
+
+    
 
 
     

@@ -938,8 +938,9 @@ History</string>
     <property name="title">
      <string>FIle</string>
     </property>
-    <addaction name="actionDelete_Project"/>
+    <addaction name="actionRecalibrate"/>
     <addaction name="actionProject_History"/>
+    <addaction name= "actionDisplay_pixel_density"/>
     <addaction name="actionExit"/>
    </widget>
    <widget class="QMenu" name="menuSystem">
@@ -951,7 +952,7 @@ History</string>
    <addaction name="menuSystem"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
-  <action name="actionDelete_Project">
+  <action name="actionRecalibrate">
    <property name="text">
     <string>Delete Project</string>
    </property>
@@ -959,6 +960,11 @@ History</string>
   <action name="actionProject_History">
    <property name="text">
     <string>Project History</string>
+   </property>
+  </action>
+   <action name="actionDisplay_pixel_density">
+   <property name="text">
+    <string>Display Current Pixel Density</string>
    </property>
   </action>
   <action name="actionExit">

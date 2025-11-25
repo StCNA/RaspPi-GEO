@@ -8,12 +8,12 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 
 class BackendManager:
     def __init__(self):
-        self.ar = ArUcoDetector()
+        self.is_remote_mode = False  
+        self.ar = ArUcoDetector(is_remote_mode=self.is_remote_mode)
         self.db = DbManager()
         self.local_camera = LocalCAM()
         self.local_camera_ready = True
         self.current_project_ID = None
-        self.is_remote_mode = False
         self.satellite_client = None
         self.status_callback = None
 
@@ -50,6 +50,7 @@ class BackendManager:
         return self.db.verify_project_tags(project_ID, detected_boat_tags, detected_box_tags)
     
     def tag_detector(self, image, tag_type):
+        
         return self.ar.tag_detector(image, tag_type)
     
     def capture_image(self):
@@ -73,6 +74,7 @@ class BackendManager:
                     
                     if isinstance(result, tuple) and result[0]:
                         image = result[1]
+                        self.ar.debug_all_tags(image)
                         import cv2
                         cv2.imwrite("remote_captured_debug.png", image)
                         return image
@@ -132,14 +134,11 @@ class BackendManager:
                 print("Image rectification successful")
                 return rectified
             else:
-                print("Rectification failed - ArUco tags not detected or insufficient")
-                print("Saving original image instead")
-                return image
+                return None
                 
         except Exception as e:
             print(f"Rectification error: {e}")
-            print("Saving original image instead")
-            return image
+            return None
 
     def new_box_wrkflw(self, depth_from, depth_to, core_numb, box_numb, BH_ID):
         image = self.capture_image()
@@ -155,16 +154,31 @@ class BackendManager:
         # ALWAYS rectify the image before saving
         rectified_image = self.rectify_captured_image(image)
         
+        if rectified_image is None:
+            self.db.delete_from_proj_tbl(project_ID)
+            return "RECTIFICATION_FAILED"
+        
         if boat_detected_IDs is None and box_detected_IDs is None:
-            # Save rectified image (not original)
             self.update_before_image(project_ID, rectified_image)
-            return "NO_TAGS_DETECTED", project_ID
+            self.current_project_ID = project_ID
+            return "NO_TAGS_DETECTED"
+        
+        #check for multiple boat tags
+        if boat_detected_IDs is not None and len(boat_detected_IDs) > 1:
+            self.db.delete_from_proj_tbl(project_ID)
+            return "TAG_OVERLIMIT"
+        
+        # check for multiple box tags
+        if box_detected_IDs is not None and len(box_detected_IDs) > 1:
+            self.db.delete_from_proj_tbl(project_ID)
+            return "TAG_OVERLIMIT"
         
         if boat_detected_IDs is not None:
             for tag_ID in boat_detected_IDs.flatten():
                 if self.db.is_aruco_tag_available(int(tag_ID), 'boat'):
                     self.boat_tag_insert(int(tag_ID), project_ID)
                 else:
+                    self.db.delete_from_proj_tbl(project_ID)
                     return "TAG_IN_USE"
 
         if box_detected_IDs is not None:
@@ -172,6 +186,7 @@ class BackendManager:
                 if self.db.is_aruco_tag_available(int(tag_ID), 'box'):
                     self.box_tag_insert(int(tag_ID), project_ID)
                 else:
+                    self.db.delete_from_proj_tbl(project_ID)
                     return "TAG_IN_USE"
                     
         # Save rectified image 
@@ -337,5 +352,82 @@ class BackendManager:
                 return "REMOTE_CONNECTION_FAILED"  # Return specific error instead of False
         
         return True
+    
+    def capture_measurement(self, measurement_type):
+        if not self.current_project_ID:
+            return "ERROR - Must be in a project to take measurements"
+       
+        frame = self.capture_image()
+        if frame is None:
+            return "ERROR - Could not capture image"
+
+        # Detect slider position
+        position_mm = self.ar.get_slider_position(frame)  
+        if position_mm is None:
+            return "ERROR - Slider not detected"
+       
+        # Verifies if boat tag is in image
+        boat_detected_IDs = self.tag_detector(frame, '4')    
+        if boat_detected_IDs is None:
+            return "ERROR - No boat tag detected"
+        if len(boat_detected_IDs) > 1:
+            return "ERROR - one boat per"
+        
+        # verify boat tag belongs to the opened project
+        boat_tag_number = int(boat_detected_IDs.flatten()[0])
+        project_boat_tags = self.db.get_boat_tags(self.current_project_ID)
+        if boat_tag_number not in project_boat_tags:
+            return f"ERROR - Boat tag {boat_tag_number} does not belong to project {self.current_project_ID}"
+        
+        # validate core measurments    
+        if measurement_type in ['core_start', 'core_end']:
+            existing = self.db.get_core_boundary(self.current_project_ID, measurement_type)
+            
+            if existing:
+                existing_position, existing_boat = existing
+                return f"ALREADY_EXISTS|{measurement_type}|{existing_position}|{existing_boat}|{position_mm}|{boat_tag_number}"
+        
+        if measurement_type == 'core_end':
+            core_start_data = self.db.get_core_boundary(self.current_project_ID, 'core_start')
+            
+            if core_start_data:
+                _, start_boat_tag = core_start_data
+                if start_boat_tag != boat_tag_number:
+                    return f"ERROR - Core End must use same boat as Core Start (boat {start_boat_tag})"
+            
+        # Store measurement 
+        self.db.store_measurement_with_boat(
+            self.current_project_ID, 
+            measurement_type, 
+            int(position_mm),
+            boat_tag_number
+        )
+        
+        return f"SUCCESS - {measurement_type} at {int(position_mm)}mm for boat {boat_tag_number}"
+    
+    def overwrite_measurement(self, measurement_type, position_mm, boat_tag_number):
+        # overtire current core_end (accidental placement)
+        if not self.current_project_ID:
+            return "ERROR - Must be in a project"
+        
+        self.db.update_measurement(
+            self.current_project_ID,
+            measurement_type,
+            int(position_mm),
+            boat_tag_number
+        )
+        
+        return f"SUCCESS - {measurement_type} updated to {int(position_mm)}mm for boat {boat_tag_number}"
+    
+    def reset_measurements(self):
+        if not self.current_project_ID:
+            return "ERROR - No active project"
+        
+        count = self.db.delete_project_measurements(self.current_project_ID)
+        
+        if count > 0:
+            return f"SUCCESS - Cleared {count} measurement(s)"
+        else:
+            return "No measurements to clear"
 
 bk = BackendManager()

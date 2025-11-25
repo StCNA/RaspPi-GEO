@@ -2,7 +2,7 @@ from CoreImagingV4_ui import Ui_MainWindow
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QMessageBox, QDialog, QVBoxLayout,
-    QLabel, QLineEdit, QPushButton
+    QLabel, QLineEdit, QPushButton,QToolButton, QInputDialog
 )
 from backend_manager import bk
 import sys
@@ -17,7 +17,7 @@ from io import BytesIO
 import numpy as np
 from client_side import PC2RPi_client
 import cv2
-
+import pickle
 
 class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -26,6 +26,10 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.bk = bk
         self.is_remote_mode = False
         self.satellite_client = None
+        self.calibration_mode = False
+        self.calibration_data = []
+        self.calibration_point = 1
+        self.total_calibration_points = 5
         self.setup_button_groups()
         self.connect_signals()
         
@@ -53,8 +57,9 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         """)
         
         # Initial status message
-        self.update_status("Core Imaging System initialized")
-        self.update_status("Camera starting...")
+        self.update_status("Core Imaging System initialized - Camera starting...")
+        self.update_status(f"Pixel Density = {self.bk.ar.slope:.4f} px/mm, Intercept = {self.bk.ar.intercept:.4f} px")
+
         
     def update_status(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -85,8 +90,13 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         self.pushButton_9.clicked.connect(self.meas_point_clicked)
         self.pushButton_10.clicked.connect(self.avoid_start_clicked)
         self.pushButton_11.clicked.connect(self.avoid_end_clicked)
+        self.pushButton_12.clicked.connect(self.reset_measurements_clicked)
         self.Remote.clicked.connect(self.remote_clicked)
         self.local.clicked.connect(self.local_clicked)
+        self.actionExit.triggered.connect(self.exit_clicked)
+        self.actionProject_History.triggered.connect(self.open_project_history)
+        self.actionRecalibrate.triggered.connect(self.recalibrate_clicked)
+        self.actionDisplay_pixel_density.triggered.connect(self.display_current_pixeldensity)
         
         
     def new_box_clicked(self):
@@ -104,32 +114,58 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
             result = self.bk.new_box_wrkflw(depth_from, depth_to, core_number, box_number, bh_id)
             
             if result == "TAG_IN_USE":
-                
+                self.update_status("ERROR: Tag(s) already in use")
+                QMessageBox.warning(self, 'Tag In Use', 
+                                'One or more Tags in project already in use.\n\n'
+                                'Please use new tags or complete open projects.')
                 self.update_status("WARNING: Tag already in use")
                 return
+            
+            elif result == 'TAG_OVERLIMIT':
+                self.update_status("WARNING: Multiple boat or box tags detected")
+                QMessageBox.warning(self, 'Multiple boat or box tags detected', 
+                                    'Multiple Tags detected\n\n'
+                                    '1 Box and 1 Boat per project!')
+                return
+            
+            elif result == 'RECTIFICATION_FAILED':
+                self.update_status("ERROR: Position tags not visible - cannot rectify image")
+                QMessageBox.warning(self, 'Rectification Failed', 
+                                'Position tags (0,1,2,3) not detected.\n\n'
+                                'Please adjust the core to show all 4 corner tags.')
+                return
+            
+            elif result == "NO_TAGS_DETECTED":
+                self.update_status("WARNING: No boat or box tags detected")
                 
-      
-            elif isinstance(result, tuple) and result[0] == 'NO_TAGS_DETECTED':
-                self.update_status("WARNING: No ArUco tags detected in image")
-                reply = QMessageBox.question(self, 'No Tags Detected', 
-                                            'No ArUco tags were detected in the image.\n\nContinue anyway?',
-                                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                reply = QMessageBox.question(
+                    self,
+                    "No Tags Detected",
+                    "No boat or box tags were detected in the image.\n\n"
+                    "Continue with project creation?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
                 
-                if reply == QMessageBox.StandardButton.Yes:
-                    project_id = result[1]
-                    self.bk.current_project_ID = project_id
+                if reply == QMessageBox.StandardButton.No:
+                    # Delete the project that was already created
+                    project_id = self.bk.current_project_ID
+                    if project_id:
+                        self.bk.db.delete_from_proj_tbl(project_id)
+                        self.bk.current_project_ID = None
+                    self.update_status("Project creation cancelled - no tags")
+                    return
+                else:
+                    # Continue with project even without tags
+                    project_id = self.bk.current_project_ID
                     self.update_project_display(depth_from, depth_to, core_number, box_number, bh_id, project_id)
                     self.update_status(f"Project {project_id} created successfully (no tags)")
-                else:
-                    self.update_status("Project creation cancelled by user")
-                    return
             
             elif result:  
-                project_id = result
-                self.bk.current_project_ID = result
+                project_id = int(result)
+                self.bk.current_project_ID = int(result)
                 self.update_project_display(depth_from, depth_to, core_number, box_number, bh_id, project_id)
                 self.update_status(f"Project {project_id} created successfully")
-                
+            
         else:
             self.update_status("New box creation cancelled")
 
@@ -153,19 +189,81 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         
     #refresh product display when needed
     def update_project_display(self, depth_from, depth_to, core_number, box_number, bh_id, project_ID):
+        if isinstance(project_ID, tuple):
+            project_ID = project_ID[0]
+        project_ID = int(project_ID)
+        
         boat_tags = self.bk.db.get_boat_tags(project_ID)
         box_tags = self.bk.db.get_box_tags(project_ID)
         boat_display = ", ".join(map(str, boat_tags)) if boat_tags else "None"
         box_display = ", ".join(map(str, box_tags)) if box_tags else "None"
         
+        # Get measurements
+        measurements = self.bk.db.get_project_measurements(project_ID)
+        core_start = None
+        core_end = None
+        meas_points = []
+        avoid_starts = []
+        avoid_ends = []
+        
+        for meas_type, position_mm, boat_tag in measurements:
+            if meas_type == 'core_start':
+                core_start = (position_mm, boat_tag)
+            elif meas_type == 'core_end':
+                core_end = (position_mm, boat_tag)
+            elif meas_type == 'meas_point':
+                meas_points.append((position_mm, boat_tag))
+            elif meas_type == 'avoid_start':
+                avoid_starts.append(position_mm)
+            elif meas_type == 'avoid_end':
+                avoid_ends.append(position_mm)
+        
+        # Build display text
         display_text = f"""<center><b>Current Project: {project_ID}</b></center><br>
-    BHID: {bh_id} <br>
-    Core ID: {core_number} <br>
+    BHID: {bh_id}<br>
+    Core #: {core_number}<br>
     Box #: {box_number}<br>
     Depth from (m): {depth_from}<br>
     Depth to (m): {depth_to}<br>
     Box: {box_display}<br>
-    Boat(s): {boat_display}"""
+    Boat(s): {boat_display}<br>
+    <br>
+    <b>═══ MEASUREMENTS ═══</b><br>"""
+        
+        # Core boundaries
+        if core_start:
+            display_text += f"Core Start: {core_start[0]}mm (boat {core_start[1]})<br>"
+        else:
+            display_text += "Core Start: <i>Not set</i><br>"
+        
+        if core_end:
+            display_text += f"Core End: {core_end[0]}mm (boat {core_end[1]})<br>"
+        else:
+            display_text += "Core End: <i>Not set</i><br>"
+        
+        # Core length calculation
+        if core_start and core_end:
+            length = core_end[0] - core_start[0]
+            display_text += f"<b>Core Length: {length}mm ({length/1000:.3f}m)</b><br>"
+        
+        display_text += "<br>"
+        
+        # Measurement points
+        if meas_points:
+            display_text += f"<b>Measurement Points ({len(meas_points)}):</b><br>"
+            for pos, boat in meas_points:
+                display_text += f"  • {pos}mm (boat {boat})<br>"
+            display_text += "<br>"
+        
+        # Avoid zones
+        if avoid_starts and avoid_ends:
+            zones = list(zip(avoid_starts, avoid_ends))
+            display_text += f"<b>Avoid Zones ({len(zones)}):</b><br>"
+            for i, (start, end) in enumerate(zones, 1):
+                zone_length = end - start
+                display_text += f"  • Zone {i}: {start}-{end}mm ({zone_length}mm)<br>"
+        elif avoid_starts or avoid_ends:
+            display_text += "<b>Avoid Zones:</b> <i>Incomplete (missing start or end)</i><br>"
         
         self.textEdit.setHtml(display_text)
         self.check_add_boat_button_state()
@@ -273,18 +371,24 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
     
     def remote_clicked(self):
         self.update_status("Switching to remote satellite camera...")
-    
         success = self.bk.set_remote_mode(True)
         
         if success == True:
+            # Update ArUco detector for satellite mode
+            self.bk.ar.is_remote_mode = True
+            self.bk.ar.slider_tag = 11
+            self.bk.ar.reference_tag = 7
+            self.bk.ar.required_corner_tags = [5, 6, 7, 8]
+            self.bk.ar.slope, self.bk.ar.intercept = self.bk.ar.load_calibration()
+            
             self.update_status("SUCCESS: Connected to satellite camera!")
-            self.update_status("Remote mode active - all buttons now use satellite camera")
+            self.update_status("Remote mode active - using tags 5-8, slider tag 9")
         elif success == "REMOTE_CONNECTION_FAILED":
             self.update_status("ERROR: Remote satellite camera not connected")
             self.local.setChecked(True)  
         else:
             self.update_status("ERROR: Failed to connect to satellite camera")
-            self.local.setChecked(True)  # Switch back to local camera
+            self.local.setChecked(True)
             
     def local_clicked(self):
         self.update_status("Switching to local camera...")
@@ -292,49 +396,326 @@ class MyApp(QtWidgets.QMainWindow, Ui_MainWindow):
         success = self.bk.set_remote_mode(False)
         
         if success:
+            # Update ArUco detector for main mode
+            self.bk.ar.is_remote_mode = False
+            self.bk.ar.slider_tag = 4
+            self.bk.ar.reference_tag = 2
+            self.bk.ar.required_corner_tags = [0, 1, 2, 3]
+            self.bk.ar.slope, self.bk.ar.intercept = self.bk.ar.load_calibration()
+            
             self.update_status("SUCCESS: Switched to local camera")
+            self.update_status("Using tags 0-3, slider tag 4")
         else:
             self.update_status("ERROR: Failed to switch to local camera")
-    
+            
     def core_start_clicked(self):
         self.update_status("CORE START measurement initiated")
-        self.update_status("Testing ArUco rectification...")
+        result = self.bk.capture_measurement("core_start")
         
-        # Capture current image
-        current_image = self.bk.capture_image()
-        if current_image is not None:
-            self.update_status("Image captured, attempting rectification...")
+        if result.startswith("ALREADY_EXISTS"):
+            parts = result.split("|")
+            existing_pos = parts[2]
+            existing_boat = parts[3]
+            new_pos = parts[4]
+            new_boat = parts[5]
             
-            # Test rectification
-            if hasattr(self.bk, 'ar'):
-                rectified = self.bk.ar.rectify_image(current_image)
-                if rectified is not None:
-                    # Save test images
-                    cv2.imwrite("test_original.jpg", current_image)
-                    cv2.imwrite("test_rectified.jpg", rectified)
-                    self.update_status("SUCCESS: Rectification complete!")
-                    self.update_status(f"Original image size: {current_image.shape}")
-                    self.update_status(f"Rectified image size: {rectified.shape}")
-                    self.update_status("Images saved: test_original.jpg, test_rectified.jpg")
-                else:
-                    self.update_status("ERROR: Rectification failed - check ArUco tag detection")
-                    self.update_status("Make sure tags 0, 1, 2, 3 (6x6 dictionary) are visible")
+            reply = QMessageBox.question(
+                self,
+                "Core Start Already Exists",
+                f"Core Start already captured:\n"
+                f"  Existing: {existing_pos}mm (boat {existing_boat})\n"
+                f"  New: {new_pos}mm (boat {new_boat})\n\n"
+                f"Overwrite existing measurement?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                result = self.bk.overwrite_measurement("core_start", int(new_pos), int(new_boat))
+                self.update_status(result)
+                self.refresh_current_project_display() 
             else:
-                self.update_status("ERROR: ArUco detector not initialized")
+                self.update_status("Core Start measurement cancelled")
         else:
-            self.update_status("ERROR: Failed to capture image")
-            
+            self.update_status(result)
+            if "SUCCESS" in result:
+                self.refresh_current_project_display() 
+
     def core_end_clicked(self):
-        self.update_status("CORE END measurement initiated") 
+        self.update_status("CORE END measurement initiated")
+        result = self.bk.capture_measurement("core_end")
         
+        # Check if measurement already exists
+        if result.startswith("ALREADY_EXISTS"):
+            parts = result.split("|")
+            existing_pos = parts[2]
+            existing_boat = parts[3]
+            new_pos = parts[4]
+            new_boat = parts[5]
+            
+            reply = QMessageBox.question(
+                self,
+                "Core End Already Exists",
+                f"Core End already captured:\n"
+                f"  Existing: {existing_pos}mm (boat {existing_boat})\n"
+                f"  New: {new_pos}mm (boat {new_boat})\n\n"
+                f"Overwrite existing measurement?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                result = self.bk.overwrite_measurement("core_end", int(new_pos), int(new_boat))
+                self.update_status(result)
+                self.refresh_current_project_display() 
+            else:
+                self.update_status("Core End measurement cancelled")
+        else:
+            self.update_status(result)
+            if "SUCCESS" in result:
+                self.refresh_current_project_display() 
+                
+            
+            
+            self.update_status(result)
+
     def meas_point_clicked(self):
         self.update_status("MEASUREMENT POINT captured")
-        
+        result = self.bk.capture_measurement("meas_point")
+        self.update_status(result)
+        if "SUCCESS" in result:
+                self.refresh_current_project_display() 
+
     def avoid_start_clicked(self):
         self.update_status("AVOID START marked")
-        
+        result = self.bk.capture_measurement("avoid_start")
+        self.update_status(result)
+        if "SUCCESS" in result:
+                self.refresh_current_project_display() 
+
     def avoid_end_clicked(self):
         self.update_status("AVOID END marked")
+        result = self.bk.capture_measurement("avoid_end")
+        self.update_status(result)
+        if "SUCCESS" in result:
+                self.refresh_current_project_display() 
+    
+    def reset_measurements_clicked(self):
+        self.update_status("Reset Initiated...")
+        if not self.bk.current_project_ID:
+            self.update_status("ERROR: No active project")
+            QMessageBox.warning(self, "No Project" , "No active project")
+            return 
+        
+        measurements = self.bk.db.get_project_measurements(self.bk.current_project_ID)
+        count = len(measurements)
+        
+        if count == 0:
+            self.update_status("Measurments are already empty.. :(")
+            QMessageBox.information(self, "No Measurements", "No measurements to clear for this project")
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Reset Measurements",
+            f"Delete all {count} measurement(s) for this project?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            result = self.bk.reset_measurements()
+            self.update_status(result)
+            
+            if "SUCCESS" in result:
+                QMessageBox.information(self, "Measurements Reset", result)
+                self.refresh_current_project_display()
+            else:
+                self.update_status("Reset cancelled")
+        
+
+    def recalibrate_clicked(self):
+        self.update_status("Recalibration Started")
+        self.calibration_mode = True
+        self.calibration_data = []
+        self.calibration_point = 1
+        
+        # Prompt for first point
+        self.prompt_calibration_point()
+        
+    def prompt_calibration_point(self):
+        self.update_status("Place slider in position")
+        # Simple message box to pause workflow
+        reply = QMessageBox.question(
+            self, 
+            f'Calibration Point {self.calibration_point}',
+            f'Position slider at mark #{self.calibration_point}\n\n'
+            f'Ready to capture?',
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+        )
+        
+        if reply == QMessageBox.StandardButton.Cancel:
+            self.cancel_calibration()
+            return
+        
+        # If OK clicked, move to capture
+        self.update_status("OK clicked - ready to capture")
+        self.capture_calibration_point()
+    
+    def capture_calibration_point(self):
+        self.update_status("Capturing image...")
+        frame = self.bk.capture_image()
+        if frame is None:
+            self.update_status("ERROR: Could not capture calibration image")
+            QMessageBox.critical(self, "Capture Failed", "Could not capture calibration image")
+            self.cancel_calibration()
+            return
+        
+        # get raw pixels (not converted to mm)
+        detected_pixels = self.bk.ar.get_slider_position(frame, return_pixels=True)
+        
+        if detected_pixels is None:
+            self.update_status("ERROR: Could not detect slider position")
+            QMessageBox.warning(self, "Detection Failed", 
+                            "Could not detect slider (Tag 4) or reference (Tag 2).\n"
+                            "Retrying this point...")
+            self.prompt_calibration_point()
+            return
+        
+        self.update_status(f"Detected {detected_pixels} pixels from Tag 2")
+        self.get_measured_distance(detected_pixels)
+    
+    def get_measured_distance(self, detected_pixels):
+        # Simple input dialog
+        measured_mm, ok = QInputDialog.getDouble(
+            self,
+            f"Calibration Point {self.calibration_point}",
+            f"Detected: {detected_pixels} pixels\n\n"
+            f"Enter measured distance from Tag 2 (mm):",
+            value=0.0,
+            min=0.0,
+            max=5000.0,
+            decimals=1
+        )
+        
+        if not ok:
+            self.update_status("Measurement cancelled - retrying point")
+            self.prompt_calibration_point()  
+            return
+        
+        if measured_mm <= 0:
+            self.update_status("ERROR: Distance must be greater than 0")
+            QMessageBox.warning(self, "Invalid Input", "Distance must be greater than 0")
+            self.get_measured_distance(detected_pixels)  # Ask again
+            return
+        
+        # calculate pixel density for the point / Update to store two points and not pixel density
+        self.update_status(f"Measured: {measured_mm}mm at {detected_pixels} pixels")
+        print(f"Point {self.calibration_point} - {measured_mm}mm = {detected_pixels}px")
+        if detected_pixels < 0 or measured_mm <= 0:
+            self.update_status("ERROR: Invalid measurement values")
+            QMessageBox.warning(self, "Invalid Data", "Invalid pixel or mm values detected")
+            self.get_measured_distance(detected_pixels)
+            return
+        
+        # store for later printing
+        self.calibration_data.append({
+            'point': self.calibration_point,
+            'measured_mm': measured_mm,
+            'detected_pixels': detected_pixels,
+        })        
+        self.update_status(f"Point {self.calibration_point} captured succesfully")
+        self.calibration_point += 1
+        if self.calibration_point <= self.total_calibration_points:
+            self.prompt_calibration_point() 
+        else:
+            self.finish_calibration()
+         
+         
+    def cancel_calibration(self):
+        self.calibration_mode = False
+        self.update_status("Calibration cancelled")
+        QMessageBox.information(self, "Calibration Cancelled", 
+                            "Calibration process was cancelled.")
+        
+    def finish_calibration(self):
+        import math
+        from datetime import datetime
+        
+        self.calibration_mode = False
+        
+        # Extract mm and pixel values from calibration data
+        mm_values = [point['measured_mm'] for point in self.calibration_data]
+        pixel_values = [point['detected_pixels'] for point in self.calibration_data]
+        coefficients = np.polyfit(mm_values, pixel_values, 1)
+        slope = coefficients[0]
+        intercept = coefficients[1]
+        
+        correlation_matrix = np.corrcoef(mm_values, pixel_values)
+        r_squared = correlation_matrix[0, 1] ** 2
+        self.update_status("\nCalibration Points:")
+        for point in self.calibration_data:
+            self.update_status(f"  {point['measured_mm']}mm → {point['detected_pixels']}px")
+                
+        # print to external terminal (debugging)
+        self.update_status("CALIBRATION RESULTS")
+        self.update_status(f"Slope: {slope:.4f} px/mm")
+        self.update_status(f"Intercept: {intercept:.4f} px")
+        
+        # confiirmation
+        msg = QMessageBox()
+        msg.setWindowTitle("Save Calibration?")
+        msg.setText(
+            f"Linear Fit Calibration:\n\n"
+            f"Slope: {slope:.4f} px/mm\n"
+            f"Intercept: {intercept:.4f} px\n"
+            f"Save this calibration?"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | 
+                            QMessageBox.StandardButton.Discard)
+        
+        result = msg.exec()
+        
+        if result == QMessageBox.StandardButton.Yes:
+            # Prepare calibration data
+            calibration_data = {
+                'slope': slope,
+                'intercept': intercept,
+                'calibration_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'calibration_points': self.calibration_data,
+            }
+            
+            # Save to pickle file
+            if self.bk.is_remote_mode:
+                calibration_file = "/media/jeeves003/EMPTY DRIVE/calibration_satellite.pkl"
+                mode_text = "SATELLITE"
+            else:
+                calibration_file = "/media/jeeves003/EMPTY DRIVE/calibration.pkl"
+                mode_text = "MAIN"
+
+            
+            try:
+                with open(calibration_file, 'wb') as f:
+                    pickle.dump(calibration_data, f)
+                
+                # Update system
+                self.bk.ar.slope = slope
+                self.bk.ar.intercept = intercept
+                
+                QMessageBox.information(self, "Calibration Complete",
+                                    f"Calibration saved successfully!\n\n"
+                                    f"Slope: {slope:.4f} px/mm\n"
+                                    f"Intercept: {intercept:.4f} px")
+            except Exception as e:
+                self.update_status(f"ERROR: Could not save calibration: {e}")
+                QMessageBox.critical(self, "Save Failed", f"Could not save calibration:\n{e}")
+        else:
+            self.update_status("Calibration discarded")
+            QMessageBox.information(self, "Calibration Discarded", 
+                                "Calibration was not saved.")
+            
+    
+    
+    def display_current_pixeldensity(self):
+        self.update_status(f"The Current Pixel Density slope is {self.bk.ar.slope:.4f} px/mm") 
+            
 
 class NewProjectDialog(QDialog, Ui_CreateNewProject):
     def __init__(self, parent=None):
@@ -413,8 +794,8 @@ class ProjectDetailDialog(QDialog, Ui_ProjectDetailDialog):
         try:
             self.parent_app.bk.db.c.execute("""
                 SELECT BH_ID, core_numb, depth_from, depth_to, box_numb, 
-                       before_image_data, after_image_data,
-                       add_boat_1, add_boat_2, add_boat_3, add_boat_4
+                    before_image_data, after_image_data,
+                    add_boat_1, add_boat_2, add_boat_3, add_boat_4
                 FROM project_table WHERE project_ID = ?
             """, (self.project_id,))
             
@@ -431,13 +812,44 @@ class ProjectDetailDialog(QDialog, Ui_ProjectDetailDialog):
                 
                 boat_display = ", ".join(map(str, boat_tags)) if boat_tags else "None"
                 box_display = ", ".join(map(str, box_tags)) if box_tags else "None"
+                
+                # Get measurements
+                measurements = self.parent_app.bk.db.get_project_measurements(self.project_id)
+                
+                # Find core start and core end
+                core_start = None
+                core_end = None
+                
+                for meas_type, position_mm, boat_tag in measurements:
+                    if meas_type == 'core_start':
+                        core_start = (position_mm, boat_tag)
+                    elif meas_type == 'core_end':
+                        core_end = (position_mm, boat_tag)
+                
+                # Build info text
                 info_text = f"""BHID: {bh_id}
-Core ID: {core_numb}
-Box #: {box_numb}
-Depth from (m): {depth_from}
-Depth to (m): {depth_to}
-Box tag: {box_display}
-Boat tags: {boat_display}"""
+    Core #: {core_numb}
+    Box #: {box_numb}
+    Depth from (m): {depth_from}
+    Depth to (m): {depth_to}
+    Box tag: {box_display}
+    Boat tags: {boat_display}"""
+                
+                # Add measurements if they exist
+                if core_start or core_end:
+                    info_text += "\n\n--- MEASUREMENTS ---"
+                    
+                    if core_start:
+                        info_text += f"\nCore Start: {core_start[0]}mm (boat {core_start[1]})"
+                    
+                    if core_end:
+                        info_text += f"\nCore End: {core_end[0]}mm (boat {core_end[1]})"
+                    
+                    # Calculate and display core length
+                    if core_start and core_end:
+                        length_mm = core_end[0] - core_start[0]
+                        length_m = length_mm / 1000
+                        info_text += f"\nCore Length: {length_mm}mm ({length_m:.3f}m)"
                 
                 self.projectInfoText.setPlainText(info_text)
                 self.load_before_after_images(before_path, after_path)
